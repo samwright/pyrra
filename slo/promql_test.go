@@ -146,6 +146,29 @@ var (
 		}
 		return o
 	}
+	objectiveHTTPNativeLatencyComplete = func() Objective {
+		o := objectiveHTTPLatency()
+		o.Indicator.Latency = nil
+		o.Indicator.LatencyNative = &LatencyNativeIndicator{
+			Latency: model.Duration(time.Second),
+			Success: Metric{
+				Name: "http_request_duration_seconds",
+				LabelMatchers: []*labels.Matcher{
+					{Type: labels.MatchEqual, Name: "job", Value: "metrics-service-thanos-receive-default"},
+					{Type: labels.MatchRegexp, Name: "code", Value: "2.."},
+					{Type: labels.MatchEqual, Name: "__name__", Value: "http_request_duration_seconds"},
+				},
+			},
+			Total: Metric{
+				Name: "http_request_duration_seconds",
+				LabelMatchers: []*labels.Matcher{
+					{Type: labels.MatchEqual, Name: "job", Value: "metrics-service-thanos-receive-default"},
+					{Type: labels.MatchEqual, Name: "__name__", Value: "http_request_duration_seconds"},
+				},
+			},
+		}
+		return o
+	}
 	objectiveHTTPLatencyGrouping = func() Objective {
 		o := objectiveHTTPLatency()
 		o.Indicator.Latency.Grouping = []string{"job", "handler"}
@@ -389,6 +412,10 @@ func TestObjective_QueryTotal(t *testing.T) {
 		objective: objectiveHTTPNativeLatency(),
 		expected:  `sum(http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",le="",slo="monitoring-http-latency"})`,
 	}, {
+		name:      "http-latency-native-complete",
+		objective: objectiveHTTPNativeLatencyComplete(),
+		expected:  `sum(http_request_duration_seconds:increase4w{job="metrics-service-thanos-receive-default",le="",slo="monitoring-http-latency"})`,
+	}, {
 		name:      "http-latency-grouping",
 		objective: objectiveHTTPLatencyGrouping(),
 		expected:  `sum by (job, handler) (http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",le="",slo="monitoring-http-latency"})`,
@@ -470,6 +497,10 @@ func TestObjective_QueryErrors(t *testing.T) {
 		objective: objectiveHTTPNativeLatency(),
 		expected:  `sum(http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",le="",slo="monitoring-http-latency"}) - sum(http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",le="1",slo="monitoring-http-latency"})`,
 	}, {
+		name:      "http-latency-native-complete",
+		objective: objectiveHTTPNativeLatencyComplete(),
+		expected:  `sum(http_request_duration_seconds:increase4w{job="metrics-service-thanos-receive-default",le="",slo="monitoring-http-latency"}) - sum(http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",slo="monitoring-http-latency"})`,
+	}, {
 		name:      "http-latency-grouping",
 		objective: objectiveHTTPLatencyGrouping(),
 		expected:  `sum by (job, handler) (http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",le="",slo="monitoring-http-latency"}) - sum by (job, handler) (http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",le="1",slo="monitoring-http-latency"})`,
@@ -550,6 +581,10 @@ func TestObjective_QueryErrorBudget(t *testing.T) {
 		name:      "http-latency-native",
 		objective: objectiveHTTPNativeLatency(),
 		expected:  `((1 - 0.995) - (1 - sum(http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",le="1",slo="monitoring-http-latency"} or vector(0)) / sum(http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",le="",slo="monitoring-http-latency"}))) / (1 - 0.995)`,
+	}, {
+		name:      "http-latency-native-complete",
+		objective: objectiveHTTPNativeLatencyComplete(),
+		expected:  `((1 - 0.995) - (1 - sum(http_request_duration_seconds:increase4w{code=~"2..",job="metrics-service-thanos-receive-default",le="1",slo="monitoring-http-latency"} or vector(0)) / sum(http_request_duration_seconds:increase4w{job="metrics-service-thanos-receive-default",le="",slo="monitoring-http-latency"}))) / (1 - 0.995)`,
 	}, {
 		name:      "http-latency-grouping",
 		objective: objectiveHTTPLatencyGrouping(),
@@ -641,6 +676,10 @@ func TestObjective_QueryBurnrate(t *testing.T) {
 		name:      "http-latency-native",
 		objective: objectiveHTTPNativeLatency(),
 		expected:  `http_request_duration_seconds:burnrate5m{code=~"2..",job="metrics-service-thanos-receive-default",slo="monitoring-http-latency"}`,
+	}, {
+		name:      "http-latency-native-complete",
+		objective: objectiveHTTPNativeLatencyComplete(),
+		expected:  `http_request_duration_seconds:burnrate5m{job="metrics-service-thanos-receive-default",slo="monitoring-http-latency"}`,
 	}, {
 		name:      "http-latency-grouping",
 		objective: objectiveHTTPLatencyGrouping(),
@@ -745,6 +784,11 @@ func TestObjective_RequestRange(t *testing.T) {
 		timerange: 2 * time.Hour,
 		expected:  `sum(histogram_count(rate(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[2h])))`,
 	}, {
+		name:      "http-latency-native-complete",
+		objective: objectiveHTTPNativeLatencyComplete(),
+		timerange: 2 * time.Hour,
+		expected:  `sum(histogram_count(rate(http_request_duration_seconds{job="metrics-service-thanos-receive-default"}[2h])))`,
+	}, {
 		name:      "http-latency-grouping",
 		objective: objectiveHTTPLatencyGrouping(),
 		timerange: 2 * time.Hour,
@@ -844,6 +888,11 @@ func TestObjective_ErrorsRange(t *testing.T) {
 		timerange: time.Hour,
 		expected:  `1 - sum(histogram_fraction(0, 1, rate(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[1h])))`,
 	}, {
+		name:      "http-latency-native-complete",
+		objective: objectiveHTTPNativeLatencyComplete(),
+		timerange: time.Hour,
+		expected:  `(sum(histogram_count(rate(http_request_duration_seconds{job="metrics-service-thanos-receive-default"}[1h]))) - sum(histogram_fraction(0, 1, rate(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[1h]))) * sum(histogram_count(rate(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[1h])))) / sum(histogram_count(rate(http_request_duration_seconds{job="metrics-service-thanos-receive-default"}[1h])))`,
+	}, {
 		name:      "http-latency-grouping",
 		objective: objectiveHTTPLatencyGrouping(),
 		timerange: time.Hour,
@@ -941,6 +990,11 @@ func TestObjective_DurationRange(t *testing.T) {
 	}, {
 		name:      "http-latency-native",
 		objective: objectiveHTTPNativeLatency(),
+		timerange: time.Hour,
+		expected:  `histogram_quantile(0.95, sum(rate(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[1h])))`,
+	}, {
+		name:      "http-latency-native-complete",
+		objective: objectiveHTTPNativeLatencyComplete(),
 		timerange: time.Hour,
 		expected:  `histogram_quantile(0.95, sum(rate(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[1h])))`,
 	}, {

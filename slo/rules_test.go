@@ -1368,17 +1368,33 @@ func TestObjective_IncreaseRules(t *testing.T) {
 			Interval: monitoringDuration("2m30s"),
 			Rules: []monitoringv1.Rule{{
 				Record: "http_request_duration_seconds:increase4w",
-				Expr:   intstr.FromString(`histogram_count(increase(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[4w]))`),
+				Expr:   intstr.FromString(`sum(histogram_count(increase(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[4w])))`),
 				Labels: map[string]string{"job": "metrics-service-thanos-receive-default", "slo": "monitoring-http-latency"},
 			}, {
 				Record: "http_request_duration_seconds:increase4w",
-				Expr:   intstr.FromString(`histogram_fraction(0, 1, increase(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[4w])) * histogram_count(increase(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[4w]))`),
+				Expr:   intstr.FromString(`sum(histogram_fraction(0, 1, increase(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[4w]))) * sum(histogram_count(increase(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[4w])))`),
 				Labels: map[string]string{"job": "metrics-service-thanos-receive-default", "slo": "monitoring-http-latency", "le": "1"},
 				//}, {
 				//	Alert:  "SLOMetricAbsent",
 				//	Expr:   intstr.FromString(`absent(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}) == 1`),
 				//	For:    monitoringDuration("2m"),
 				//	Labels: map[string]string{"job": "metrics-service-thanos-receive-default", "slo": "monitoring-http-latency", "severity": "critical"},
+			}},
+		},
+	}, {
+		name: "http-latency-native-complete",
+		slo:  objectiveHTTPNativeLatencyComplete(),
+		rules: monitoringv1.RuleGroup{
+			Name:     "monitoring-http-latency-increase",
+			Interval: monitoringDuration("2m30s"),
+			Rules: []monitoringv1.Rule{{
+				Record: "http_request_duration_seconds:increase4w",
+				Expr:   intstr.FromString(`sum(histogram_count(increase(http_request_duration_seconds{job="metrics-service-thanos-receive-default"}[4w])))`),
+				Labels: map[string]string{"job": "metrics-service-thanos-receive-default", "slo": "monitoring-http-latency"},
+			}, {
+				Record: "http_request_duration_seconds:increase4w",
+				Expr:   intstr.FromString(`sum(histogram_fraction(0, 1, increase(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[4w]))) * sum(histogram_count(increase(http_request_duration_seconds{code=~"2..",job="metrics-service-thanos-receive-default"}[4w])))`),
+				Labels: map[string]string{"job": "metrics-service-thanos-receive-default", "slo": "monitoring-http-latency", "le": "1"},
 			}},
 		},
 	}, {
@@ -1624,7 +1640,7 @@ func TestObjective_IncreaseRules(t *testing.T) {
 		},
 	}}
 
-	require.Len(t, testcases, 17)
+	require.Len(t, testcases, 18)
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
