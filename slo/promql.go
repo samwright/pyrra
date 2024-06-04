@@ -739,40 +739,36 @@ func (o Objective) ErrorsRange(timerange time.Duration) string {
 
 		return expr.String()
 	case LatencyNative:
+		var query string
 		if o.Indicator.LatencyNative.Success.Name == "" {
-			expr, err := parser.ParseExpr(`1 - sum(histogram_fraction(0,0.696969, rate(metric{matchers="total"}[1s])))`)
-			if err != nil {
-				return err.Error()
-			}
-
-			objectiveReplacer{
-				metric:   o.Indicator.LatencyNative.Total.Name,
-				matchers: o.Indicator.LatencyNative.Total.LabelMatchers,
-				window:   timerange,
-				target:   time.Duration(o.Indicator.LatencyNative.Latency).Seconds(),
-			}.replace(expr)
-
-			return expr.String()
+			query = `1 - histogram_fraction(0,0.696969, sum by (grouping) (rate(metric{matchers="total"}[1s])))`
 		} else {
-			// total: sum(histogram_count(rate(metric{matchers="total"}[1s])))
-			// success: sum(histogram_fraction(0,0.696969, rate(errorMetric{matchers="errors"}[1s]))) * sum(histogram_count(rate(errorMetric{matchers="errors"}[1s])))
-			// expr = (total - success) / total
-			expr, err := parser.ParseExpr(`( sum(histogram_count(rate(metric{matchers="total"}[1s]))) - sum(histogram_fraction(0,0.696969, rate(errorMetric{matchers="errors"}[1s]))) * sum(histogram_count(rate(errorMetric{matchers="errors"}[1s]))) ) / sum(histogram_count(rate(metric{matchers="total"}[1s])))`)
-			if err != nil {
-				return err.Error()
-			}
-
-			objectiveReplacer{
-				metric:        o.Indicator.LatencyNative.Total.Name,
-				matchers:      o.Indicator.LatencyNative.Total.LabelMatchers,
-				errorMetric:   o.Indicator.LatencyNative.Success.Name,
-				errorMatchers: o.Indicator.LatencyNative.Success.LabelMatchers,
-				window:        timerange,
-				target:        time.Duration(o.Indicator.LatencyNative.Latency).Seconds(),
-			}.replace(expr)
-
-			return expr.String()
+			query = `
+			(
+				sum by (grouping) (histogram_count(rate(metric{matchers="total"}[1s])))
+				-
+				histogram_fraction(0,0.696969, sum by (grouping) (rate(errorMetric{matchers="errors"}[1s]))) * sum by (grouping) (histogram_count(rate(errorMetric{matchers="errors"}[1s])))
+			)
+			/
+			sum by (grouping) (histogram_count(rate(metric{matchers="total"}[1s])))`
 		}
+
+		expr, err := parser.ParseExpr(query)
+		if err != nil {
+			return err.Error()
+		}
+
+		objectiveReplacer{
+			metric:        o.Indicator.LatencyNative.Total.Name,
+			matchers:      o.Indicator.LatencyNative.Total.LabelMatchers,
+			errorMetric:   o.Indicator.LatencyNative.Success.Name,
+			errorMatchers: o.Indicator.LatencyNative.Success.LabelMatchers,
+			grouping:      o.Indicator.LatencyNative.Grouping,
+			target:        time.Duration(o.Indicator.LatencyNative.Latency).Seconds(),
+			window:        timerange,
+		}.replace(expr)
+
+		return expr.String()
 	case BoolGauge:
 		expr, err := parser.ParseExpr(`100 * sum by (group) ((count_over_time(metric{matchers="total"}[1s]) - sum_over_time(metric{matchers="total"}[1s]))) / sum by(group) (count_over_time(metric{matchers="total"}[1s]))`)
 		if err != nil {
