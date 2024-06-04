@@ -348,6 +348,60 @@ spec:
 			},
 		},
 	},
+	{
+		config: `
+apiVersion: pyrra.dev/v1alpha1
+kind: ServiceLevelObjective
+metadata:
+ name: http-latency
+ namespace: monitoring
+ labels:
+   prometheus: k8s
+   role: alert-rules
+spec:
+ target: 99.5
+ window: 4w
+ indicator:
+   latencyNative:
+     latency: 512ms
+     success:
+       metric: http_request_duration_seconds_bucket{job="metrics-service-thanos-receive-default",code=~"2.."}
+     total:
+       metric: http_request_duration_seconds_count{job="metrics-service-thanos-receive-default"}
+`,
+		objective: slo.Objective{
+			Labels: labels.FromStrings(
+				labels.MetricName, "http-latency",
+				"namespace", "monitoring",
+			),
+			Target: 0.995,
+			Window: model.Duration(28 * 24 * time.Hour),
+			Alerting: slo.Alerting{
+				Burnrates: true,
+				Absent:    true,
+			},
+			Indicator: slo.Indicator{
+				LatencyNative: &slo.LatencyNativeIndicator{
+					Latency: model.Duration(512 * time.Millisecond),
+					Success: slo.Metric{
+						Name: "http_request_duration_seconds_bucket",
+						LabelMatchers: []*labels.Matcher{
+							{Type: labels.MatchEqual, Name: "job", Value: "metrics-service-thanos-receive-default"},
+							{Type: labels.MatchRegexp, Name: "code", Value: "2.."},
+							{Type: labels.MatchEqual, Name: labels.MetricName, Value: "http_request_duration_seconds_bucket"},
+						},
+					},
+					Total: slo.Metric{
+						Name: "http_request_duration_seconds_count",
+						LabelMatchers: []*labels.Matcher{
+							{Type: labels.MatchEqual, Name: "job", Value: "metrics-service-thanos-receive-default"},
+							{Type: labels.MatchEqual, Name: labels.MetricName, Value: "http_request_duration_seconds_count"},
+						},
+					},
+				},
+			},
+		},
+	},
 }
 
 func TestServiceLevelObjective_Internal(t *testing.T) {
@@ -609,6 +663,7 @@ func TestServiceLevelObjective_Validate(t *testing.T) {
 					ServiceLevelIndicator: v1alpha1.ServiceLevelIndicator{
 						LatencyNative: &v1alpha1.NativeLatencyIndicator{
 							Latency:  "1s",
+							Success:  v1alpha1.Query{Metric: `foo{foo="bar", error="false"}`},
 							Total:    v1alpha1.Query{Metric: `foo{foo="bar"}`},
 							Grouping: nil,
 						},
@@ -626,6 +681,12 @@ func TestServiceLevelObjective_Validate(t *testing.T) {
 			ln.Spec.ServiceLevelIndicator.LatencyNative.Total.Metric = ""
 			warn, err := ln.ValidateCreate()
 			require.EqualError(t, err, "latencyNative total metric must be set")
+			require.Nil(t, warn)
+
+			ln = latencyNative()
+			ln.Spec.ServiceLevelIndicator.LatencyNative.Success.Metric = ""
+			warn, err = ln.ValidateCreate()
+			require.Nil(t, err)
 			require.Nil(t, warn)
 
 			ln = latencyNative()
@@ -663,6 +724,29 @@ func TestServiceLevelObjective_Validate(t *testing.T) {
 			ln.Spec.ServiceLevelIndicator.LatencyNative.Total.Metric = `foo{foo="bar'}`
 			warn, err = ln.ValidateCreate()
 			require.EqualError(t, err, "failed to parse latencyNative total metric: 1:9: parse error: unterminated quoted string")
+			require.Nil(t, warn)
+		})
+
+		t.Run("invalidSuccessMetric", func(t *testing.T) {
+			ln := latencyNative()
+			ln.Spec.ServiceLevelIndicator.LatencyNative.Success.Metric = "foo{"
+			warn, err := ln.ValidateCreate()
+			require.EqualError(t, err, "failed to parse latencyNative success metric: 1:5: parse error: unexpected end of input inside braces")
+			require.Nil(t, warn)
+
+			ln.Spec.ServiceLevelIndicator.LatencyNative.Success.Metric = "foo}"
+			warn, err = ln.ValidateCreate()
+			require.EqualError(t, err, "failed to parse latencyNative success metric: 1:4: parse error: unexpected character: '}'")
+			require.Nil(t, warn)
+
+			ln.Spec.ServiceLevelIndicator.LatencyNative.Success.Metric = "$$$"
+			warn, err = ln.ValidateCreate()
+			require.EqualError(t, err, "failed to parse latencyNative success metric: 1:1: parse error: unexpected character: '$'")
+			require.Nil(t, warn)
+
+			ln.Spec.ServiceLevelIndicator.LatencyNative.Success.Metric = `foo{foo="bar'}`
+			warn, err = ln.ValidateCreate()
+			require.EqualError(t, err, "failed to parse latencyNative success metric: 1:9: parse error: unterminated quoted string")
 			require.Nil(t, warn)
 		})
 	})

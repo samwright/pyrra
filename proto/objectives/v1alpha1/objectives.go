@@ -68,9 +68,17 @@ func ToInternal(o *Objective) slo.Objective {
 				return slo.Objective{}
 			}
 			latencyNative = &slo.LatencyNativeIndicator{
+				Success:  slo.Metric{Name: l.Success.GetName()},
 				Total:    slo.Metric{Name: l.Total.GetName()},
 				Grouping: l.GetGrouping(),
 				Latency:  latency,
+			}
+			for _, m := range l.Success.GetMatchers() {
+				latencyNative.Success.LabelMatchers = append(latencyNative.Success.LabelMatchers, &labels.Matcher{
+					Type:  labels.MatchType(m.GetType()),
+					Name:  m.GetName(),
+					Value: m.GetValue(),
+				})
 			}
 			for _, m := range l.Total.GetMatchers() {
 				latencyNative.Total.LabelMatchers = append(latencyNative.Total.LabelMatchers, &labels.Matcher{
@@ -179,6 +187,10 @@ func FromInternal(o slo.Objective) *Objective {
 	if l := o.Indicator.LatencyNative; l != nil {
 		latencyNative = &LatencyNative{
 			Grouping: o.Grouping(),
+			Success: &Query{
+				Name:   l.Success.Name,
+				Metric: l.Success.Metric(),
+			},
 			Total: &Query{
 				Name:   l.Total.Name,
 				Metric: l.Total.Metric(),
@@ -187,6 +199,13 @@ func FromInternal(o slo.Objective) *Objective {
 		}
 		for _, m := range l.Total.LabelMatchers {
 			latencyNative.Total.Matchers = append(latencyNative.Total.Matchers, &LabelMatcher{
+				Type:  LabelMatcher_Type(m.Type),
+				Name:  m.Name,
+				Value: m.Value,
+			})
+		}
+		for _, m := range l.Success.LabelMatchers {
+			latencyNative.Success.Matchers = append(latencyNative.Success.Matchers, &LabelMatcher{
 				Type:  LabelMatcher_Type(m.Type),
 				Name:  m.Name,
 				Value: m.Value,

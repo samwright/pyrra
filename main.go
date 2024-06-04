@@ -701,14 +701,34 @@ func (s *objectiveServer) List(ctx context.Context, req *connect.Request[objecti
 					oi.Indicator.Latency.Total.LabelMatchers = append(oi.Indicator.Latency.Total.LabelMatchers, m)
 				}
 			case slo.LatencyNative:
+				groupingMatchersSuccess := make(map[string]*labels.Matcher, len(groupingMatchers))
+				groupingMatchersTotal := make(map[string]*labels.Matcher, len(groupingMatchers))
+				for _, matcher := range groupingMatchers {
+					// We need to copy the matchers to avoid modifying the original later on.
+					groupingMatchersSuccess[matcher.Name] = &labels.Matcher{Type: matcher.Type, Name: matcher.Name, Value: matcher.Value}
+					groupingMatchersTotal[matcher.Name] = &labels.Matcher{Type: matcher.Type, Name: matcher.Name, Value: matcher.Value}
+				}
+
+				for _, m := range oi.Indicator.LatencyNative.Success.LabelMatchers {
+					if rm, replace := groupingMatchers[m.Name]; replace {
+						m.Type = rm.Type
+						m.Value = rm.Value
+						delete(groupingMatchersSuccess, m.Name)
+					}
+				}
 				for _, m := range oi.Indicator.LatencyNative.Total.LabelMatchers {
 					if rm, replace := groupingMatchers[m.Name]; replace {
 						m.Type = rm.Type
 						m.Value = rm.Value
-						delete(groupingMatchers, m.Name)
+						delete(groupingMatchersTotal, m.Name)
 					}
 				}
-				for _, m := range groupingMatchers {
+
+				// Now add the remaining matchers we didn't find before.
+				for _, m := range groupingMatchersSuccess {
+					oi.Indicator.LatencyNative.Success.LabelMatchers = append(oi.Indicator.LatencyNative.Success.LabelMatchers, m)
+				}
+				for _, m := range groupingMatchersTotal {
 					oi.Indicator.LatencyNative.Total.LabelMatchers = append(oi.Indicator.LatencyNative.Total.LabelMatchers, m)
 				}
 			case slo.BoolGauge:
@@ -761,6 +781,13 @@ func (s *objectiveServer) GetStatus(ctx context.Context, req *connect.Request[ob
 			for _, m := range groupingMatchers {
 				objective.Indicator.Latency.Success.LabelMatchers = append(objective.Indicator.Latency.Success.LabelMatchers, m)
 				objective.Indicator.Latency.Total.LabelMatchers = append(objective.Indicator.Latency.Total.LabelMatchers, m)
+			}
+		}
+		// Sam: Not sure what this does...
+		if objective.Indicator.LatencyNative != nil {
+			for _, m := range groupingMatchers {
+				objective.Indicator.LatencyNative.Success.LabelMatchers = append(objective.Indicator.LatencyNative.Success.LabelMatchers, m)
+				objective.Indicator.LatencyNative.Total.LabelMatchers = append(objective.Indicator.LatencyNative.Total.LabelMatchers, m)
 			}
 		}
 		if objective.Indicator.BoolGauge != nil {
@@ -893,6 +920,23 @@ func (s *objectiveServer) GraphErrorBudget(ctx context.Context, req *connect.Req
 			objective.Indicator.Latency.Grouping = []string{}
 			for g := range groupings {
 				objective.Indicator.Latency.Grouping = append(objective.Indicator.Latency.Grouping, g)
+			}
+		}
+		if objective.Indicator.LatencyNative != nil {
+			groupings := map[string]struct{}{}
+			for _, g := range objective.Indicator.Ratio.Grouping {
+				groupings[g] = struct{}{}
+			}
+
+			for _, m := range groupingMatchers {
+				objective.Indicator.LatencyNative.Success.LabelMatchers = append(objective.Indicator.LatencyNative.Success.LabelMatchers, m)
+				objective.Indicator.LatencyNative.Total.LabelMatchers = append(objective.Indicator.LatencyNative.Total.LabelMatchers, m)
+				delete(groupings, m.Name)
+			}
+
+			objective.Indicator.LatencyNative.Grouping = []string{}
+			for g := range groupings {
+				objective.Indicator.LatencyNative.Grouping = append(objective.Indicator.LatencyNative.Grouping, g)
 			}
 		}
 		if objective.Indicator.BoolGauge != nil {
@@ -1285,6 +1329,12 @@ func (s *objectiveServer) GraphRate(ctx context.Context, req *connect.Request[ob
 				objective.Indicator.Latency.Total.LabelMatchers = append(objective.Indicator.Latency.Total.LabelMatchers, m)
 			}
 		}
+		if objective.Indicator.LatencyNative != nil {
+			for _, m := range groupingMatchers {
+				objective.Indicator.LatencyNative.Success.LabelMatchers = append(objective.Indicator.LatencyNative.Success.LabelMatchers, m)
+				objective.Indicator.LatencyNative.Total.LabelMatchers = append(objective.Indicator.LatencyNative.Total.LabelMatchers, m)
+			}
+		}
 		if objective.Indicator.BoolGauge != nil {
 			objective.Indicator.BoolGauge.LabelMatchers = append(objective.Indicator.BoolGauge.LabelMatchers, groupingMatchers...)
 		}
@@ -1382,6 +1432,12 @@ func (s *objectiveServer) GraphErrors(ctx context.Context, req *connect.Request[
 			for _, m := range groupingMatchers {
 				objective.Indicator.Latency.Success.LabelMatchers = append(objective.Indicator.Latency.Success.LabelMatchers, m)
 				objective.Indicator.Latency.Total.LabelMatchers = append(objective.Indicator.Latency.Total.LabelMatchers, m)
+			}
+		}
+		if objective.Indicator.LatencyNative != nil {
+			for _, m := range groupingMatchers {
+				objective.Indicator.LatencyNative.Success.LabelMatchers = append(objective.Indicator.LatencyNative.Success.LabelMatchers, m)
+				objective.Indicator.LatencyNative.Total.LabelMatchers = append(objective.Indicator.LatencyNative.Total.LabelMatchers, m)
 			}
 		}
 		if objective.Indicator.BoolGauge != nil {
@@ -1483,6 +1539,13 @@ func (s *objectiveServer) GraphDuration(ctx context.Context, req *connect.Reques
 			for _, m := range groupingMatchers {
 				objective.Indicator.Latency.Success.LabelMatchers = append(objective.Indicator.Latency.Success.LabelMatchers, m)
 				objective.Indicator.Latency.Total.LabelMatchers = append(objective.Indicator.Latency.Total.LabelMatchers, m)
+			}
+		}
+		// Sam: Not sure what this does...
+		if objective.Indicator.LatencyNative != nil {
+			for _, m := range groupingMatchers {
+				objective.Indicator.LatencyNative.Success.LabelMatchers = append(objective.Indicator.LatencyNative.Success.LabelMatchers, m)
+				objective.Indicator.LatencyNative.Total.LabelMatchers = append(objective.Indicator.LatencyNative.Total.LabelMatchers, m)
 			}
 		}
 		if objective.Indicator.BoolGauge != nil {

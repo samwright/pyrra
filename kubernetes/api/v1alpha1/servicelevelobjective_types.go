@@ -157,6 +157,10 @@ type LatencyIndicator struct {
 }
 
 type NativeLatencyIndicator struct {
+	// +optional
+	// Success is the metric that returns how many errors there are.
+	Success Query `json:"success,omitempty"`
+
 	// Total is the metric that returns how many requests there are in total.
 	Total Query `json:"total"`
 
@@ -335,6 +339,13 @@ func (in *ServiceLevelObjective) validate() (admission.Warnings, error) {
 		if err != nil {
 			return warnings, fmt.Errorf("failed to parse latencyNative total metric: %w", err)
 		}
+
+		if latencyNative.Success.Metric != "" {
+			_, err = parser.ParseExpr(latencyNative.Success.Metric)
+			if err != nil {
+				return warnings, fmt.Errorf("failed to parse latencyNative success metric: %w", err)
+			}
+		}
 	}
 
 	if in.Spec.ServiceLevelIndicator.BoolGauge != nil {
@@ -497,8 +508,35 @@ func (in *ServiceLevelObjective) Internal() (slo.Objective, error) {
 			totalMatchers[i] = &labels.Matcher{Type: matcher.Type, Name: matcher.Name, Value: matcher.Value}
 		}
 
+		var successMetric slo.Metric
+		if in.Spec.ServiceLevelIndicator.LatencyNative.Success.Metric == "" {
+			successMetric = slo.Metric{}
+		} else {
+			successExpr, err := parser.ParseExpr(in.Spec.ServiceLevelIndicator.LatencyNative.Success.Metric)
+			if err != nil {
+				return slo.Objective{}, err
+			}
+
+			successVec, ok := successExpr.(*parser.VectorSelector)
+			if !ok {
+				return slo.Objective{}, fmt.Errorf("latency success metric is not a VectorSelector")
+			}
+
+			// Copy the matchers to get rid of the re field for unit testing...
+			successMatchers := make([]*labels.Matcher, len(successVec.LabelMatchers))
+			for i, matcher := range successVec.LabelMatchers {
+				successMatchers[i] = &labels.Matcher{Type: matcher.Type, Name: matcher.Name, Value: matcher.Value}
+			}
+
+			successMetric = slo.Metric{
+				Name:          successVec.Name,
+				LabelMatchers: successMatchers,
+			}
+		}
+
 		latencyNative = &slo.LatencyNativeIndicator{
 			Latency: latency,
+			Success: successMetric,
 			Total: slo.Metric{
 				Name:          totalVec.Name,
 				LabelMatchers: totalMatchers,
