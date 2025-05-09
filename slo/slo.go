@@ -133,6 +133,7 @@ type LatencyIndicator struct {
 
 type LatencyNativeIndicator struct {
 	Latency  model.Duration
+	Success  Metric
 	Total    Metric
 	Grouping []string
 }

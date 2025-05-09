@@ -170,16 +170,36 @@ func (o Objective) QueryErrors(window model.Duration) string {
 			Value: "",
 		})
 
-		errorMatchers := append(cloneMatchers(matchers), &labels.Matcher{
-			Type:  labels.MatchEqual,
-			Name:  labels.BucketLabel,
-			Value: fmt.Sprintf("%g", time.Duration(o.Indicator.LatencyNative.Latency).Seconds()),
-		})
+		var errorMetric string
+		var errorMatchers []*labels.Matcher
+
+		if o.Indicator.LatencyNative.Success.Name == "" {
+			errorMetric = metric
+			errorMatchers = append(cloneMatchers(matchers), &labels.Matcher{
+				Type:  labels.MatchEqual,
+				Name:  labels.BucketLabel,
+				Value: fmt.Sprintf("%g", time.Duration(o.Indicator.LatencyNative.Latency).Seconds()),
+			})
+		} else {
+			errorMetric = increaseName(o.Indicator.LatencyNative.Success.Name, window)
+			errorMatchers = cloneMatchers(o.Indicator.LatencyNative.Success.LabelMatchers)
+			for _, m := range errorMatchers {
+				if m.Name == labels.MetricName {
+					m.Value = errorMetric
+					break
+				}
+			}
+			errorMatchers = append(errorMatchers, &labels.Matcher{
+				Type:  labels.MatchEqual,
+				Name:  "slo",
+				Value: o.Name(),
+			})
+		}
 
 		objectiveReplacer{
 			metric:        metric,
 			matchers:      totalMatchers,
-			errorMetric:   metric,
+			errorMetric:   errorMetric,
 			errorMatchers: errorMatchers,
 			grouping:      o.Indicator.LatencyNative.Grouping,
 		}.replace(expr)
@@ -329,8 +349,13 @@ func (o Objective) QueryErrorBudget() string {
 		case LatencyNative:
 			metric = increaseName(o.Indicator.LatencyNative.Total.Name, o.Window)
 			matchers = cloneMatchers(o.Indicator.LatencyNative.Total.LabelMatchers)
-			errorMetric = increaseName(o.Indicator.LatencyNative.Total.Name, o.Window)
-			errorMatchers = cloneMatchers(o.Indicator.LatencyNative.Total.LabelMatchers)
+			if o.Indicator.LatencyNative.Success.Name == "" {
+				errorMetric = increaseName(o.Indicator.LatencyNative.Total.Name, o.Window)
+				errorMatchers = cloneMatchers(o.Indicator.LatencyNative.Total.LabelMatchers)
+			} else {
+				errorMetric = increaseName(o.Indicator.LatencyNative.Success.Name, o.Window)
+				errorMatchers = cloneMatchers(o.Indicator.LatencyNative.Success.LabelMatchers)
+			}
 			grouping = o.Indicator.LatencyNative.Grouping
 		}
 
@@ -714,16 +739,33 @@ func (o Objective) ErrorsRange(timerange time.Duration) string {
 
 		return expr.String()
 	case LatencyNative:
-		expr, err := parser.ParseExpr(`1 - sum(histogram_fraction(0,0.696969, rate(metric{matchers="total"}[1s])))`)
+		var query string
+		if o.Indicator.LatencyNative.Success.Name == "" {
+			query = `1 - histogram_fraction(0,0.696969, sum by (grouping) (rate(metric{matchers="total"}[1s])))`
+		} else {
+			query = `
+			(
+				sum by (grouping) (histogram_count(rate(metric{matchers="total"}[1s])))
+				-
+				histogram_fraction(0,0.696969, sum by (grouping) (rate(errorMetric{matchers="errors"}[1s]))) * sum by (grouping) (histogram_count(rate(errorMetric{matchers="errors"}[1s])))
+			)
+			/
+			sum by (grouping) (histogram_count(rate(metric{matchers="total"}[1s])))`
+		}
+
+		expr, err := parser.ParseExpr(query)
 		if err != nil {
 			return err.Error()
 		}
 
 		objectiveReplacer{
-			metric:   o.Indicator.LatencyNative.Total.Name,
-			matchers: o.Indicator.LatencyNative.Total.LabelMatchers,
-			window:   timerange,
-			target:   time.Duration(o.Indicator.LatencyNative.Latency).Seconds(),
+			metric:        o.Indicator.LatencyNative.Total.Name,
+			matchers:      o.Indicator.LatencyNative.Total.LabelMatchers,
+			errorMetric:   o.Indicator.LatencyNative.Success.Name,
+			errorMatchers: o.Indicator.LatencyNative.Success.LabelMatchers,
+			grouping:      o.Indicator.LatencyNative.Grouping,
+			target:        time.Duration(o.Indicator.LatencyNative.Latency).Seconds(),
+			window:        timerange,
 		}.replace(expr)
 
 		return expr.String()
@@ -770,20 +812,37 @@ func (o Objective) DurationRange(timerange time.Duration, percentile float64) st
 
 		return expr.String()
 	case LatencyNative:
-		expr, err := parser.ParseExpr(`histogram_quantile(0.420, sum(rate(metric{matchers="total"}[1s])))`)
-		if err != nil {
-			return err.Error()
+		if o.Indicator.LatencyNative.Success.Name == "" {
+			expr, err := parser.ParseExpr(`histogram_quantile(0.420, sum(rate(metric{matchers="total"}[1s])))`)
+			if err != nil {
+				return err.Error()
+			}
+			objectiveReplacer{
+				metric:     o.Indicator.LatencyNative.Total.Name,
+				matchers:   o.Indicator.LatencyNative.Total.LabelMatchers,
+				grouping:   o.Indicator.LatencyNative.Grouping,
+				window:     timerange,
+				percentile: percentile,
+			}.replace(expr)
+
+			return expr.String()
+		} else {
+			expr, err := parser.ParseExpr(`histogram_quantile(0.420, sum(rate(errorMetric{matchers="errors"}[1s])))`)
+			if err != nil {
+				return err.Error()
+			}
+
+			objectiveReplacer{
+				errorMetric:   o.Indicator.LatencyNative.Success.Name,
+				errorMatchers: o.Indicator.LatencyNative.Success.LabelMatchers,
+				grouping:      o.Indicator.LatencyNative.Grouping,
+				window:        timerange,
+				percentile:    percentile,
+			}.replace(expr)
+
+			return expr.String()
 		}
 
-		objectiveReplacer{
-			metric:     o.Indicator.LatencyNative.Total.Name,
-			matchers:   o.Indicator.LatencyNative.Total.LabelMatchers,
-			grouping:   o.Indicator.LatencyNative.Grouping,
-			window:     timerange,
-			percentile: percentile,
-		}.replace(expr)
-
-		return expr.String()
 	default:
 		return ""
 	}

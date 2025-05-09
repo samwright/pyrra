@@ -66,6 +66,7 @@ message LatencyNative {
   Query total = 1;
   string latency = 2;
   repeated string grouping = 3;
+  Query success = 4;
 }
 
 message BoolGauge {

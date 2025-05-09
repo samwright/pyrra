@@ -512,11 +512,6 @@ func (o Objective) Burnrate(timerange time.Duration) string {
 
 		return expr.String()
 	case LatencyNative:
-		expr, err := parser.ParseExpr(`1 - histogram_fraction(0,0.696969, rate(metric{matchers="total"}[1s]))`)
-		if err != nil {
-			return err.Error()
-		}
-
 		groupingMap := map[string]struct{}{}
 		for _, s := range o.Indicator.LatencyNative.Grouping {
 			groupingMap[s] = struct{}{}
@@ -528,15 +523,37 @@ func (o Objective) Burnrate(timerange time.Duration) string {
 		}
 		sort.Strings(grouping)
 
+		var query string
+		if o.Indicator.LatencyNative.Success.Name == "" {
+			query = `1 - histogram_fraction(0,0.696969, sum by (grouping) (rate(metric{matchers="total"}[1s])))`
+		} else {
+			query = `
+			(
+				sum by (grouping) (histogram_count(rate(metric{matchers="total"}[1s])))
+				-
+				histogram_fraction(0,0.696969, sum by (grouping) (rate(errorMetric{matchers="errors"}[1s]))) * sum by (grouping) (histogram_count(rate(errorMetric{matchers="errors"}[1s])))
+			)
+			/
+			sum by (grouping) (histogram_count(rate(metric{matchers="total"}[1s])))`
+		}
+
+		expr, err := parser.ParseExpr(query)
+		if err != nil {
+			return err.Error()
+		}
+
 		objectiveReplacer{
-			metric:   o.Indicator.LatencyNative.Total.Name,
-			matchers: o.Indicator.LatencyNative.Total.LabelMatchers,
-			grouping: grouping,
-			target:   time.Duration(o.Indicator.LatencyNative.Latency).Seconds(),
-			window:   timerange,
+			metric:        o.Indicator.LatencyNative.Total.Name,
+			matchers:      o.Indicator.LatencyNative.Total.LabelMatchers,
+			errorMetric:   o.Indicator.LatencyNative.Success.Name,
+			errorMatchers: o.Indicator.LatencyNative.Success.LabelMatchers,
+			grouping:      grouping,
+			target:        time.Duration(o.Indicator.LatencyNative.Latency).Seconds(),
+			window:        timerange,
 		}.replace(expr)
 
 		return expr.String()
+
 	case BoolGauge:
 		query := `
 			(
@@ -911,7 +928,7 @@ func (o Objective) IncreaseRules() (monitoringv1.RuleGroup, error) {
 			}
 		}
 
-		expr, err := parser.ParseExpr(`histogram_count(increase(metric{matchers="total"}[1s]))`)
+		expr, err := parser.ParseExpr(`sum by (grouping) (histogram_count(increase(metric{matchers="total"}[1s])))`)
 		if err != nil {
 			return monitoringv1.RuleGroup{}, err
 		}
@@ -929,27 +946,41 @@ func (o Objective) IncreaseRules() (monitoringv1.RuleGroup, error) {
 			Labels: ruleLabels,
 		})
 
-		expr, err = parser.ParseExpr(`histogram_fraction(0, 0.696969, increase(metric{matchers="total"}[1s])) * histogram_count(increase(metric{matchers="total"}[1s]))`)
+		expr, err = parser.ParseExpr(`
+			histogram_fraction(0, 0.696969, sum by (grouping) (increase(metric{matchers="total"}[1s]))) 
+			* 
+			sum by (grouping) (histogram_count(increase(metric{matchers="total"}[1s])))
+		`)
 		if err != nil {
 			return monitoringv1.RuleGroup{}, err
 		}
 
+		var metric string
+		var matchers []*labels.Matcher
+		if o.Indicator.LatencyNative.Success.Name != "" {
+			metric = o.Indicator.LatencyNative.Success.Name
+			matchers = o.Indicator.LatencyNative.Success.LabelMatchers
+		} else {
+			metric = o.Indicator.LatencyNative.Total.Name
+			matchers = o.Indicator.LatencyNative.Total.LabelMatchers
+		}
+
 		latencySeconds := time.Duration(o.Indicator.LatencyNative.Latency).Seconds()
 		objectiveReplacer{
-			metric:   o.Indicator.LatencyNative.Total.Name,
-			matchers: slices.Clone(o.Indicator.LatencyNative.Total.LabelMatchers),
+			metric:   metric,
+			matchers: slices.Clone(matchers),
 			grouping: slices.Clone(o.Indicator.LatencyNative.Grouping),
 			window:   time.Duration(o.Window),
 			target:   latencySeconds,
 		}.replace(expr)
 
-		ruleLabels = maps.Clone(ruleLabels)
-		ruleLabels["le"] = fmt.Sprintf("%g", latencySeconds)
+		ruleLabelsLe := maps.Clone(ruleLabels)
+		ruleLabelsLe["le"] = fmt.Sprintf("%g", latencySeconds)
 
 		rules = append(rules, monitoringv1.Rule{
-			Record: increaseName(o.Indicator.LatencyNative.Total.Name, o.Window),
+			Record: increaseName(metric, o.Window),
 			Expr:   intstr.FromString(expr.String()),
-			Labels: ruleLabels,
+			Labels: ruleLabelsLe,
 		})
 	case BoolGauge:
 		ruleLabels := o.commonRuleLabels(sloName)
